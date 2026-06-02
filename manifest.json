@@ -1,0 +1,11 @@
+{
+    "display_name": "ST Chat Bias Linker",
+    "loading_order": 50,
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Codex",
+    "version": "1.0.0",
+    "homePage": "https://github.com/",
+    "auto_update": false,
+    "minimum_client_version": "1.13.0"
+}

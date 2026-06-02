@@ -1,0 +1,26 @@
+#st-chat-bias-linker .inline-drawer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stcbl-row {
+    display: flex;
+    align-items: center;
+}
+
+.stcbl-status {
+    opacity: 0.85;
+    line-height: 1.35;
+    padding: 4px 0;
+}
+
+.stcbl-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.stcbl-actions .menu_button {
+    min-width: 130px;
+}
