@@ -24,3 +24,58 @@
 .stcbl-actions .menu_button {
     min-width: 130px;
 }
+
+#stcbl-character-overrides .inline-drawer-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.stcbl-character-settings {
+    width: 100%;
+}
+
+.stcbl-character-note,
+.stcbl-character-summary,
+.stcbl-character-empty {
+    opacity: 0.88;
+    line-height: 1.35;
+}
+
+.stcbl-character-mode {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stcbl-character-mode-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.stcbl-character-mode-title {
+    font-weight: 600;
+}
+
+.stcbl-character-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+}
+
+.stcbl-character-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stcbl-character-item-label {
+    font-size: 0.95em;
+}
+
+.stcbl-character-select {
+    width: 100%;
+}
