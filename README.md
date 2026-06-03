@@ -1,6 +1,6 @@
 # ST Chat Bias Linker
 
-SillyTavern UI extension that binds bias settings to the currently opened chat and lets each character force boolean preset switches.
+SillyTavern UI extension that binds bias settings to the currently opened chat and lets each character override prompt toggles from the current Chat Completion preset.
 
 ## What it does
 
@@ -9,7 +9,7 @@ SillyTavern UI extension that binds bias settings to the currently opened chat a
 - For Text Completion, binds the current `logit_bias` list from the active preset/settings.
 - Automatically reapplies the bound bias when switching chats if enabled.
 - Can optionally update the chat binding whenever the current bias changes.
-- Adds a character-card section with `Default` / `Always on` / `Always off` overrides for boolean preset settings.
+- Adds a character-card section with `On` / `Default` / `Off` overrides for prompt toggles from the active Chat Completion preset.
 - Stores character overrides inside the card `data.extensions`, so they travel with the character.
 
 ## Installation
@@ -34,8 +34,9 @@ When you return to this chat later, the extension applies the saved bias automat
 
 Open a character card and find **Preset Switch Overrides**.
 
-- `Default` keeps the value from the current SillyTavern preset.
-- `Always on` forces a boolean preset switch on for this character.
-- `Always off` forces a boolean preset switch off for this character.
+- The list is pulled from the currently selected Chat Completion preset prompt order.
+- `Default` keeps the current preset value for that prompt.
+- `On` forces the prompt enabled for this character.
+- `Off` forces the prompt disabled for this character.
 
-These overrides are currently intended for boolean preset options. Non-boolean preset fields still follow the normal SillyTavern preset behavior.
+These overrides currently target Chat Completion prompt toggles, matching the prompt manager list for the active preset.

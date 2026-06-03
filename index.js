@@ -3,6 +3,7 @@ const EXTENSION_NAME = 'ST Chat Bias Linker';
 const METADATA_KEY = 'st_chat_bias_linker';
 const TEXTGEN_BIAS_CONTAINER = '#textgenerationwebui_api-settings';
 const CHARACTER_PANEL_ID = 'stcbl-character-overrides';
+const CHAT_PROMPT_MANAGER_SELECTOR = '#completion_prompt_manager';
 const MODE_CHAT = 'chat_completion';
 const MODE_TEXT = 'text_completion';
 const TRI_STATE_DEFAULT = 'default';
@@ -15,66 +16,7 @@ const defaultSettings = Object.freeze({
 });
 
 const defaultCharacterConfig = Object.freeze({
-    presetBooleanOverrides: {
-        [MODE_CHAT]: {},
-        [MODE_TEXT]: {},
-    },
-});
-
-const excludedBooleanKeys = Object.freeze({
-    [MODE_CHAT]: new Set(['bind_preset_to_connection']),
-    [MODE_TEXT]: new Set([]),
-});
-
-const settingLabels = Object.freeze({
-    add_bos_token: 'Add BOS Token',
-    assistant_impersonation: 'Assistant Impersonation',
-    assistant_prefill: 'Assistant Prefill',
-    ban_eos_token: 'Ban EOS Token',
-    bypass_status_check: 'Bypass Status Check',
-    continue_prefill: 'Continue Prefill',
-    do_sample: 'Do Sample',
-    dynatemp: 'Dynamic Temperature',
-    enable_web_search: 'Web Search',
-    function_calling: 'Function Calling',
-    group_models: 'Group Models',
-    ignore_eos_token: 'Ignore EOS Token',
-    include_reasoning: 'Include Reasoning',
-    max_context_unlocked: 'Max Context Unlocked',
-    media_inlining: 'Media Inlining',
-    nanogpt_payg_override: 'NanoGPT PAYG Override',
-    openrouter_allow_fallbacks: 'OpenRouter Allow Fallbacks',
-    openrouter_use_fallback: 'OpenRouter Use Fallback',
-    request_images: 'Request Images',
-    send_banned_tokens: 'Send Banned Tokens',
-    show_external_models: 'Show External Models',
-    show_thoughts: 'Show Thoughts',
-    skip_special_tokens: 'Skip Special Tokens',
-    spaces_between_special_tokens: 'Spaces Between Special Tokens',
-    speculative_ngram: 'Speculative Ngram',
-    squash_system_messages: 'Squash System Messages',
-    stream_openai: 'Streaming',
-    streaming: 'Streaming',
-    temperature_last: 'Temperature Last',
-    use_sysprompt: 'Use System Prompt',
-});
-
-const textCompletionSelectorMap = Object.freeze({
-    add_bos_token: '#add_bos_token',
-    ban_eos_token: '#ban_eos_token',
-    bypass_status_check: '#textgenerationwebui_bypass_status_check, #bypass_status_check',
-    do_sample: '#do_sample',
-    dynatemp: '#dynatemp',
-    early_stopping: '#early_stopping',
-    ignore_eos_token: '#ignore_eos_token',
-    include_reasoning: '#include_reasoning',
-    openrouter_allow_fallbacks: '#openrouter_allow_fallbacks',
-    send_banned_tokens: '#send_banned_tokens_textgenerationwebui, #send_banned_tokens',
-    skip_special_tokens: '#skip_special_tokens',
-    spaces_between_special_tokens: '#spaces_between_special_tokens',
-    speculative_ngram: '#speculative_ngram',
-    streaming: '#streaming_textgenerationwebui, #streaming',
-    temperature_last: '#temperature_last',
+    chatPromptOverrides: {},
 });
 
 let modules = {
@@ -84,9 +26,10 @@ let modules = {
 };
 
 let isApplyingBinding = false;
-let isApplyingCharacterOverrides = false;
+let isApplyingCharacterPromptOverrides = false;
 let lastBindingSignature = '';
 let scheduledCharacterUiRefresh = 0;
+const openAiPromptOrderBase = new Map();
 
 function getContext() {
     return SillyTavern.getContext();
@@ -117,22 +60,24 @@ function cloneBiasList(value) {
     return Array.isArray(value) ? structuredClone(value) : [];
 }
 
+function clonePromptOrder(value) {
+    return Array.isArray(value) ? structuredClone(value) : [];
+}
+
+function promptOrderToMap(order) {
+    return new Map(clonePromptOrder(order).map((entry) => [entry.identifier, entry]));
+}
+
 function normalizeCharacterConfig(value) {
     const config = structuredClone(defaultCharacterConfig);
     const source = value && typeof value === 'object' ? value : {};
-    const sourceOverrides = source.presetBooleanOverrides && typeof source.presetBooleanOverrides === 'object'
-        ? source.presetBooleanOverrides
+    const sourceOverrides = source.chatPromptOverrides && typeof source.chatPromptOverrides === 'object'
+        ? source.chatPromptOverrides
         : {};
 
-    for (const mode of [MODE_CHAT, MODE_TEXT]) {
-        const modeOverrides = sourceOverrides[mode] && typeof sourceOverrides[mode] === 'object'
-            ? sourceOverrides[mode]
-            : {};
-
-        for (const [key, state] of Object.entries(modeOverrides)) {
-            if ([TRI_STATE_ON, TRI_STATE_OFF].includes(state)) {
-                config.presetBooleanOverrides[mode][key] = state;
-            }
+    for (const [identifier, state] of Object.entries(sourceOverrides)) {
+        if ([TRI_STATE_ON, TRI_STATE_OFF].includes(state)) {
+            config.chatPromptOverrides[identifier] = state;
         }
     }
 
@@ -185,7 +130,7 @@ function hasCharacterOverrides(config = getCharacterConfig()) {
         return false;
     }
 
-    return [MODE_CHAT, MODE_TEXT].some((mode) => Object.keys(config.presetBooleanOverrides?.[mode] ?? {}).length > 0);
+    return Object.keys(config.chatPromptOverrides ?? {}).length > 0;
 }
 
 function countCharacterOverrides(config = getCharacterConfig()) {
@@ -193,9 +138,7 @@ function countCharacterOverrides(config = getCharacterConfig()) {
         return 0;
     }
 
-    return [MODE_CHAT, MODE_TEXT].reduce((total, mode) => {
-        return total + Object.keys(config.presetBooleanOverrides?.[mode] ?? {}).length;
-    }, 0);
+    return Object.keys(config.chatPromptOverrides ?? {}).length;
 }
 
 async function saveCharacterConfig(config) {
@@ -207,8 +150,7 @@ async function saveCharacterConfig(config) {
     }
 
     const normalized = normalizeCharacterConfig(config);
-    const hasOverrides = hasCharacterOverrides(normalized);
-    const value = hasOverrides
+    const value = hasCharacterOverrides(normalized)
         ? normalized
         : (context.constants?.unset ?? normalized);
 
@@ -319,72 +261,6 @@ function normalizeError(error) {
     return error instanceof Error ? error.message : String(error);
 }
 
-function humanizeSettingName(key) {
-    if (settingLabels[key]) {
-        return settingLabels[key];
-    }
-
-    return key
-        .split('_')
-        .filter(Boolean)
-        .map((part) => {
-            if (['api', 'cfg', 'eos', 'bos', 'oai'].includes(part)) {
-                return part.toUpperCase();
-            }
-
-            return part.charAt(0).toUpperCase() + part.slice(1);
-        })
-        .join(' ');
-}
-
-function getBooleanSettingKeys(mode) {
-    const source = mode === MODE_CHAT
-        ? modules.openai?.oai_settings
-        : modules.textgen?.textgenerationwebui_settings;
-
-    if (!source || typeof source !== 'object') {
-        return [];
-    }
-
-    const excluded = excludedBooleanKeys[mode] ?? new Set();
-
-    return Object.keys(source)
-        .filter((key) => typeof source[key] === 'boolean' && !excluded.has(key))
-        .sort((left, right) => humanizeSettingName(left).localeCompare(humanizeSettingName(right)));
-}
-
-function getOpenAiSelector(key) {
-    const entry = modules.openai?.settingsToUpdate?.[key];
-    return Array.isArray(entry) ? entry[0] : '';
-}
-
-function getTextCompletionSelector(key) {
-    if (textCompletionSelectorMap[key]) {
-        return textCompletionSelectorMap[key];
-    }
-
-    return [`#${key}`, `#${key}_textgenerationwebui`].join(', ');
-}
-
-function applyBooleanSelector(selector, value) {
-    if (!selector) {
-        return false;
-    }
-
-    const $element = $(selector).first();
-    if (!$element.length) {
-        return false;
-    }
-
-    if ($element.is(':checkbox')) {
-        $element.prop('checked', value).trigger('input', { source: MODULE_NAME }).trigger('change', { source: MODULE_NAME });
-        return true;
-    }
-
-    $element.val(String(value)).trigger('input', { source: MODULE_NAME }).trigger('change', { source: MODULE_NAME });
-    return true;
-}
-
 async function applyChatCompletionBinding(binding) {
     if (!modules.openai?.oai_settings) {
         throw new Error('Chat Completion settings are not available.');
@@ -419,100 +295,6 @@ async function applyTextCompletionBinding(binding) {
     }
 
     getContext().saveSettingsDebounced();
-}
-
-function applyChatCompletionPresetOverrides(overrides) {
-    const settings = modules.openai?.oai_settings;
-
-    if (!settings) {
-        return 0;
-    }
-
-    let applied = 0;
-
-    for (const [key, state] of Object.entries(overrides ?? {})) {
-        if (![TRI_STATE_ON, TRI_STATE_OFF].includes(state) || typeof settings[key] !== 'boolean') {
-            continue;
-        }
-
-        const value = state === TRI_STATE_ON;
-        settings[key] = value;
-        applyBooleanSelector(getOpenAiSelector(key), value);
-        applied++;
-    }
-
-    return applied;
-}
-
-function applyTextCompletionPresetOverrides(overrides) {
-    const settings = modules.textgen?.textgenerationwebui_settings;
-
-    if (!settings) {
-        return 0;
-    }
-
-    let applied = 0;
-
-    for (const [key, state] of Object.entries(overrides ?? {})) {
-        if (![TRI_STATE_ON, TRI_STATE_OFF].includes(state) || typeof settings[key] !== 'boolean') {
-            continue;
-        }
-
-        const value = state === TRI_STATE_ON;
-        settings[key] = value;
-        applyBooleanSelector(getTextCompletionSelector(key), value);
-        applied++;
-    }
-
-    return applied;
-}
-
-async function applyCharacterPresetOverrides({ silent = true } = {}) {
-    if (isApplyingCharacterOverrides) {
-        return;
-    }
-
-    const mode = getCurrentMode();
-    const characterConfig = getCharacterConfig();
-
-    if (!characterConfig || ![MODE_CHAT, MODE_TEXT].includes(mode)) {
-        updateCharacterEditorUi();
-        updateUi();
-        return;
-    }
-
-    const overrides = characterConfig.presetBooleanOverrides?.[mode] ?? {};
-    if (Object.keys(overrides).length === 0) {
-        updateCharacterEditorUi();
-        updateUi();
-        return;
-    }
-
-    isApplyingCharacterOverrides = true;
-
-    try {
-        const applied = mode === MODE_CHAT
-            ? applyChatCompletionPresetOverrides(overrides)
-            : applyTextCompletionPresetOverrides(overrides);
-
-        if (applied > 0) {
-            getContext().saveSettingsDebounced();
-
-            if (!silent) {
-                toastr?.success('Character preset overrides applied.', EXTENSION_NAME);
-            }
-        }
-    } catch (error) {
-        console.warn(`[${MODULE_NAME}] Failed to apply character overrides`, error);
-
-        if (!silent) {
-            toastr?.error(normalizeError(error), EXTENSION_NAME);
-        }
-    } finally {
-        isApplyingCharacterOverrides = false;
-        updateCharacterEditorUi();
-        updateUi();
-    }
 }
 
 async function applyBinding(binding = getChatBinding(), { silent = false } = {}) {
@@ -569,6 +351,232 @@ async function clearBinding() {
     toastr?.success('Bias binding cleared for this chat.', EXTENSION_NAME);
 }
 
+function getCurrentOpenAiPresetName() {
+    const presetName = modules.openai?.oai_settings?.preset_settings_openai;
+    if (presetName) {
+        return String(presetName);
+    }
+
+    const selected = $('#settings_preset_openai option:selected').text();
+    return String(selected || '');
+}
+
+function getCurrentPromptOrder() {
+    const promptManager = getPromptManagerInstance();
+    const orderEntry = getPromptOrderEntry(promptManager);
+    return clonePromptOrder(orderEntry?.order);
+}
+
+function getPromptOrderEntry(promptManager = getPromptManagerInstance()) {
+    const characterId = promptManager?.activeCharacter?.id;
+    const promptOrder = Array.isArray(promptManager?.serviceSettings?.prompt_order)
+        ? promptManager.serviceSettings.prompt_order
+        : [];
+
+    if (characterId === undefined || characterId === null) {
+        return null;
+    }
+
+    return promptOrder.find((entry) => String(entry.character_id) === String(characterId)) ?? null;
+}
+
+function setCurrentPromptOrder(nextOrder) {
+    const promptManager = getPromptManagerInstance();
+
+    if (!promptManager?.activeCharacter) {
+        return false;
+    }
+
+    let orderEntry = getPromptOrderEntry(promptManager);
+
+    if (!orderEntry) {
+        if (typeof promptManager.addPromptOrderForCharacter === 'function') {
+            promptManager.addPromptOrderForCharacter(promptManager.activeCharacter, nextOrder);
+            orderEntry = getPromptOrderEntry(promptManager);
+        } else {
+            return false;
+        }
+    }
+
+    if (!orderEntry) {
+        return false;
+    }
+
+    orderEntry.order = clonePromptOrder(nextOrder);
+    return true;
+}
+
+function mergePromptBase(currentOrder, previousBase, overrides) {
+    if (!previousBase.length) {
+        return clonePromptOrder(currentOrder);
+    }
+
+    const previousBaseMap = promptOrderToMap(previousBase);
+
+    return clonePromptOrder(currentOrder).map((entry) => {
+        const state = overrides?.[entry.identifier];
+        const preserved = previousBaseMap.get(entry.identifier);
+
+        if ([TRI_STATE_ON, TRI_STATE_OFF].includes(state) && preserved) {
+            return structuredClone(preserved);
+        }
+
+        return structuredClone(entry);
+    });
+}
+
+function rememberOpenAiPromptBase({ force = false } = {}) {
+    if (!modules.openai?.oai_settings || getCurrentMode() !== MODE_CHAT) {
+        return;
+    }
+
+    const presetName = getCurrentOpenAiPresetName();
+    const promptOrder = getCurrentPromptOrder();
+
+    if (!presetName || promptOrder.length === 0) {
+        return;
+    }
+
+    const previousBase = openAiPromptOrderBase.get(presetName) ?? [];
+    const overrides = getCharacterConfig()?.chatPromptOverrides ?? {};
+    const nextBase = mergePromptBase(promptOrder, previousBase, overrides);
+
+    if (force || !openAiPromptOrderBase.has(presetName)) {
+        openAiPromptOrderBase.set(presetName, nextBase);
+    }
+}
+
+function getOpenAiPromptBase() {
+    const presetName = getCurrentOpenAiPresetName();
+
+    if (!presetName) {
+        return [];
+    }
+
+    const stored = openAiPromptOrderBase.get(presetName);
+    if (stored) {
+        return clonePromptOrder(stored);
+    }
+
+    const current = getCurrentPromptOrder();
+    if (current.length > 0) {
+        openAiPromptOrderBase.set(presetName, current);
+    }
+
+    return current;
+}
+
+function getPromptManagerInstance() {
+    if (!modules.openai?.setupChatCompletionPromptManager || !modules.openai?.oai_settings) {
+        return null;
+    }
+
+    try {
+        return modules.openai.setupChatCompletionPromptManager(modules.openai.oai_settings);
+    } catch (error) {
+        console.warn(`[${MODULE_NAME}] Failed to access prompt manager`, error);
+        return null;
+    }
+}
+
+function refreshPromptManagerUi() {
+    const promptManager = getPromptManagerInstance();
+
+    if (typeof promptManager?.render === 'function') {
+        promptManager.render(false);
+        return;
+    }
+
+    if (typeof promptManager?.renderDebounced === 'function') {
+        promptManager.renderDebounced();
+    }
+}
+
+function getPromptName(identifier) {
+    const prompts = Array.isArray(modules.openai?.oai_settings?.prompts)
+        ? modules.openai.oai_settings.prompts
+        : [];
+
+    const prompt = prompts.find((item) => item?.identifier === identifier);
+    return prompt?.name || identifier;
+}
+
+function getPromptEntriesForUi() {
+    if (getCurrentMode() !== MODE_CHAT) {
+        return [];
+    }
+
+    const baseOrder = getOpenAiPromptBase();
+
+    return baseOrder.map((entry) => ({
+        identifier: entry.identifier,
+        enabled: Boolean(entry.enabled),
+        name: getPromptName(entry.identifier),
+    }));
+}
+
+async function applyCharacterPromptOverrides({ silent = true } = {}) {
+    if (isApplyingCharacterPromptOverrides || !modules.openai?.oai_settings) {
+        return;
+    }
+
+    const baseOrder = getOpenAiPromptBase();
+    if (baseOrder.length === 0) {
+        updateCharacterEditorUi();
+        updateUi();
+        return;
+    }
+
+    const config = getCharacterConfig() ?? structuredClone(defaultCharacterConfig);
+    const overrides = config.chatPromptOverrides ?? {};
+    const nextOrder = baseOrder.map((entry) => {
+        const state = overrides[entry.identifier] ?? TRI_STATE_DEFAULT;
+        const enabled = state === TRI_STATE_ON
+            ? true
+            : state === TRI_STATE_OFF
+                ? false
+                : Boolean(entry.enabled);
+
+        return {
+            ...entry,
+            enabled,
+        };
+    });
+
+    const currentSignature = JSON.stringify(getCurrentPromptOrder());
+    const nextSignature = JSON.stringify(nextOrder);
+
+    if (currentSignature === nextSignature) {
+        updateCharacterEditorUi();
+        updateUi();
+        return;
+    }
+
+    isApplyingCharacterPromptOverrides = true;
+
+    try {
+        if (!setCurrentPromptOrder(nextOrder)) {
+            throw new Error('Prompt Manager prompt order is not available.');
+        }
+
+        refreshPromptManagerUi();
+        updateCharacterEditorUi();
+        updateUi();
+
+        if (!silent) {
+            toastr?.success('Character preset overrides applied.', EXTENSION_NAME);
+        }
+    } catch (error) {
+        console.warn(`[${MODULE_NAME}] Failed to apply character prompt overrides`, error);
+
+        if (!silent) {
+            toastr?.error(normalizeError(error), EXTENSION_NAME);
+        }
+    } finally {
+        isApplyingCharacterPromptOverrides = false;
+    }
+}
+
 async function maybeAutoApply() {
     updateUi();
 
@@ -576,7 +584,11 @@ async function maybeAutoApply() {
         await applyBinding(getChatBinding(), { silent: true });
     }
 
-    await applyCharacterPresetOverrides({ silent: true });
+    if (getCurrentMode() === MODE_CHAT) {
+        rememberOpenAiPromptBase();
+        await applyCharacterPromptOverrides({ silent: true });
+    }
+
     updateCharacterEditorUi();
 }
 
@@ -593,62 +605,13 @@ async function maybeAutoUpdateBinding() {
 
 function renderTriStateOptions(value) {
     return [
+        [TRI_STATE_ON, 'On'],
         [TRI_STATE_DEFAULT, 'Default'],
-        [TRI_STATE_ON, 'Always on'],
-        [TRI_STATE_OFF, 'Always off'],
+        [TRI_STATE_OFF, 'Off'],
     ].map(([optionValue, label]) => {
         const selected = optionValue === value ? ' selected' : '';
         return `<option value="${optionValue}"${selected}>${label}</option>`;
     }).join('');
-}
-
-function renderModeOverrideSection(mode, title, config) {
-    const keys = getBooleanSettingKeys(mode);
-
-    if (keys.length === 0) {
-        return `
-            <div class="stcbl-character-mode">
-                <div class="stcbl-character-mode-title">${title}</div>
-                <div class="stcbl-character-empty">Settings are not available in this client state.</div>
-            </div>
-        `;
-    }
-
-    const overrides = config?.presetBooleanOverrides?.[mode] ?? {};
-    const rows = keys.map((key) => {
-        const value = overrides[key] ?? TRI_STATE_DEFAULT;
-
-        return `
-            <label class="stcbl-character-item" for="stcbl-character-${mode}-${key}">
-                <span class="stcbl-character-item-label">${humanizeSettingName(key)}</span>
-                <select
-                    id="stcbl-character-${mode}-${key}"
-                    class="text_pole stcbl-character-select"
-                    data-mode="${mode}"
-                    data-key="${key}"
-                >
-                    ${renderTriStateOptions(value)}
-                </select>
-            </label>
-        `;
-    }).join('');
-
-    return `
-        <div class="stcbl-character-mode">
-            <div class="stcbl-character-mode-header">
-                <div class="stcbl-character-mode-title">${title}</div>
-                <input
-                    type="button"
-                    class="menu_button stcbl-character-reset"
-                    data-mode="${mode}"
-                    value="Reset section"
-                >
-            </div>
-            <div class="stcbl-character-grid">
-                ${rows}
-            </div>
-        </div>
-    `;
 }
 
 function getCharacterEditorMountTarget() {
@@ -661,18 +624,51 @@ function getCharacterEditorMountTarget() {
     return anchor.closest('.popup-content, .scrollableInner, form, #form_create') ?? anchor.parentElement;
 }
 
+function renderPromptOverrideRows(config) {
+    const rows = getPromptEntriesForUi();
+
+    if (rows.length === 0) {
+        return `
+            <div class="stcbl-character-empty">
+                Switch to Chat Completion and load a preset to edit prompt overrides.
+            </div>
+        `;
+    }
+
+    return rows.map((row) => {
+        const value = config.chatPromptOverrides?.[row.identifier] ?? TRI_STATE_DEFAULT;
+        const presetState = row.enabled ? 'On' : 'Off';
+
+        return `
+            <label class="stcbl-character-item" for="stcbl-prompt-override-${row.identifier}">
+                <span class="stcbl-character-item-label">${row.name}</span>
+                <span class="stcbl-character-item-meta">Preset: ${presetState}</span>
+                <select
+                    id="stcbl-prompt-override-${row.identifier}"
+                    class="text_pole stcbl-character-select"
+                    data-prompt-identifier="${row.identifier}"
+                >
+                    ${renderTriStateOptions(value)}
+                </select>
+            </label>
+        `;
+    }).join('');
+}
+
 function renderCharacterEditorContent() {
     const character = getActiveCharacter();
 
     if (!character) {
         return `
             <hr class="sysHR">
-            <div class="stcbl-character-note">Select a character to edit preset overrides.</div>
+            <div class="stcbl-character-note">Select a character to edit prompt overrides.</div>
         `;
     }
 
-    const config = getCharacterConfig();
-    const overrideCount = countCharacterOverrides(config);
+    const config = getCharacterConfig() ?? structuredClone(defaultCharacterConfig);
+    const presetName = getCurrentMode() === MODE_CHAT
+        ? (getCurrentOpenAiPresetName() || 'Not selected')
+        : 'Chat Completion only';
 
     return `
         <hr class="sysHR">
@@ -683,13 +679,20 @@ function renderCharacterEditorContent() {
             </div>
             <div class="inline-drawer-content">
                 <div class="stcbl-character-note">
-                    Default keeps the value from the active SillyTavern preset. Always on and Always off are stored in the character card.
+                    Current preset: ${presetName}
+                </div>
+                <div class="stcbl-character-note">
+                    Default keeps the current preset value. On and Off force the prompt toggle for this character only.
                 </div>
                 <div class="stcbl-character-summary">
-                    Forced preset switches: ${overrideCount}
+                    Forced prompt overrides: ${countCharacterOverrides(config)}
                 </div>
-                ${renderModeOverrideSection(MODE_CHAT, 'Chat Completion', config)}
-                ${renderModeOverrideSection(MODE_TEXT, 'Text Completion', config)}
+                <div class="stcbl-character-grid">
+                    ${renderPromptOverrideRows(config)}
+                </div>
+                <div class="stcbl-character-actions">
+                    <input id="stcbl-reset-prompts" class="menu_button" type="button" value="Reset prompt overrides">
+                </div>
             </div>
         </div>
     `;
@@ -785,7 +788,7 @@ function buildSettingsUi() {
     $('#stcbl-bind').on('click', bindCurrentBias);
     $('#stcbl-apply').on('click', async () => {
         await applyBinding();
-        await applyCharacterPresetOverrides({ silent: false });
+        await applyCharacterPromptOverrides({ silent: false });
     });
     $('#stcbl-clear').on('click', clearBinding);
 
@@ -800,42 +803,55 @@ function buildSettingsUi() {
     });
 
     $(document).on('change', '.stcbl-character-select', async function () {
-        const mode = String($(this).data('mode') || '');
-        const key = String($(this).data('key') || '');
+        const identifier = String($(this).data('prompt-identifier') || '');
         const value = String($(this).val() || TRI_STATE_DEFAULT);
         const config = getCharacterConfig() ?? structuredClone(defaultCharacterConfig);
 
-        if (![MODE_CHAT, MODE_TEXT].includes(mode) || !key) {
+        if (!identifier) {
             return;
         }
 
         if (value === TRI_STATE_DEFAULT) {
-            delete config.presetBooleanOverrides[mode][key];
+            delete config.chatPromptOverrides[identifier];
         } else {
-            config.presetBooleanOverrides[mode][key] = value;
+            config.chatPromptOverrides[identifier] = value;
         }
 
         await saveCharacterConfig(config);
-        await applyCharacterPresetOverrides({ silent: true });
+        await applyCharacterPromptOverrides({ silent: true });
     });
 
-    $(document).on('click', '.stcbl-character-reset', async function () {
-        const mode = String($(this).data('mode') || '');
-        const config = getCharacterConfig() ?? structuredClone(defaultCharacterConfig);
-
-        if (![MODE_CHAT, MODE_TEXT].includes(mode)) {
-            return;
-        }
-
-        config.presetBooleanOverrides[mode] = {};
+    $(document).on('click', '#stcbl-reset-prompts', async () => {
+        const config = structuredClone(defaultCharacterConfig);
         await saveCharacterConfig(config);
-        await applyCharacterPresetOverrides({ silent: true });
+        await applyCharacterPromptOverrides({ silent: true });
     });
 
-    $(document).on('change input', '#ai_response_configuration input[type="checkbox"]', () => {
-        if (!isApplyingCharacterOverrides) {
-            window.setTimeout(() => applyCharacterPresetOverrides({ silent: true }), 0);
-        }
+    $(document).on('change', '#settings_preset_openai', () => {
+        window.setTimeout(async () => {
+            rememberOpenAiPromptBase({ force: true });
+            await applyCharacterPromptOverrides({ silent: true });
+            updateCharacterEditorUi();
+        }, 0);
+    });
+
+    $(document).on('click', `${CHAT_PROMPT_MANAGER_SELECTOR} .prompt-manager-toggle-action`, () => {
+        window.setTimeout(async () => {
+            rememberOpenAiPromptBase({ force: true });
+            await applyCharacterPromptOverrides({ silent: true });
+            updateCharacterEditorUi();
+        }, 0);
+    });
+
+    $(document).on('click', [
+        `${CHAT_PROMPT_MANAGER_SELECTOR} .prompt-manager-detach-action`,
+        `${CHAT_PROMPT_MANAGER_SELECTOR} .prompt-manager-edit-action`,
+        `${CHAT_PROMPT_MANAGER_SELECTOR} .menu_button`,
+    ].join(', '), () => {
+        window.setTimeout(() => {
+            rememberOpenAiPromptBase({ force: true });
+            updateCharacterEditorUi();
+        }, 0);
     });
 
     updateUi();
@@ -847,8 +863,8 @@ function updateUi() {
     const mode = getCurrentMode();
     const overrideCount = countCharacterOverrides();
     const characterLabel = getActiveCharacter()
-        ? `Character preset overrides: ${overrideCount}`
-        : 'Character preset overrides: no active character';
+        ? `Character prompt overrides: ${overrideCount}`
+        : 'Character prompt overrides: no active character';
 
     $('#stcbl-auto-apply').prop('checked', settings.autoApply);
     $('#stcbl-auto-update').prop('checked', settings.autoUpdateBoundChat);
@@ -861,18 +877,23 @@ async function initialize() {
     await importRuntimeModules();
     buildSettingsUi();
     scheduleCharacterEditorUiRefresh();
+    rememberOpenAiPromptBase({ force: true });
 
     const { eventSource, event_types } = getContext();
     eventSource.on(event_types.CHAT_CHANGED, maybeAutoApply);
     eventSource.on(event_types.MAIN_API_CHANGED, async () => {
+        rememberOpenAiPromptBase({ force: true });
         await maybeAutoApply();
         updateCharacterEditorUi();
     });
     eventSource.on(event_types.PRESET_CHANGED, () => {
-        updateUi();
-        updateCharacterEditorUi();
-        window.setTimeout(maybeAutoUpdateBinding, 0);
-        window.setTimeout(() => applyCharacterPresetOverrides({ silent: true }), 0);
+        window.setTimeout(async () => {
+            rememberOpenAiPromptBase({ force: true });
+            await maybeAutoUpdateBinding();
+            await applyCharacterPromptOverrides({ silent: true });
+            updateCharacterEditorUi();
+            updateUi();
+        }, 0);
     });
     eventSource.on(event_types.CHARACTER_EDITOR_OPENED, scheduleCharacterEditorUiRefresh);
     eventSource.on(event_types.CHARACTER_PAGE_LOADED, scheduleCharacterEditorUiRefresh);

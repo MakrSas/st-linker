@@ -76,6 +76,17 @@
     font-size: 0.95em;
 }
 
+.stcbl-character-item-meta {
+    opacity: 0.72;
+    font-size: 0.85em;
+}
+
 .stcbl-character-select {
     width: 100%;
+}
+
+.stcbl-character-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
 }
