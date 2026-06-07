@@ -218,11 +218,14 @@ function getActiveBiasBinding() {
     const mode = getCurrentMode();
 
     if (mode === MODE_CHAT) {
-        const selected = modules.openai?.oai_settings?.bias_preset_selected ?? $('#openai_logit_bias_preset').val() ?? '';
+        const selected = normalizeChatCompletionBiasPresetName(
+            modules.openai?.oai_settings?.bias_preset_selected ?? $('#openai_logit_bias_preset').val(),
+            { fallbackToDefault: true },
+        );
 
         return {
             mode,
-            biasPresetName: String(selected || ''),
+            biasPresetName: selected,
             updatedAt: Date.now(),
         };
     }
@@ -261,12 +264,47 @@ function normalizeError(error) {
     return error instanceof Error ? error.message : String(error);
 }
 
+function getDefaultChatCompletionBiasPresetName() {
+    const presets = modules.openai?.oai_settings?.bias_presets;
+
+    if (!presets || typeof presets !== 'object') {
+        return '';
+    }
+
+    if (Object.hasOwn(presets, 'Default (none)')) {
+        return 'Default (none)';
+    }
+
+    const emptyPresetName = Object.entries(presets).find(([, entries]) => Array.isArray(entries) && entries.length === 0)?.[0];
+    if (emptyPresetName) {
+        return String(emptyPresetName);
+    }
+
+    const optionValue = $('#openai_logit_bias_preset option').first().val();
+    return String(optionValue || '');
+}
+
+function normalizeChatCompletionBiasPresetName(value, { fallbackToDefault = false } = {}) {
+    const presetName = String(value || '');
+    const presets = modules.openai?.oai_settings?.bias_presets;
+
+    if (presetName && presets && Object.hasOwn(presets, presetName)) {
+        return presetName;
+    }
+
+    if (fallbackToDefault) {
+        return getDefaultChatCompletionBiasPresetName();
+    }
+
+    return presetName;
+}
+
 async function applyChatCompletionBinding(binding) {
     if (!modules.openai?.oai_settings) {
         throw new Error('Chat Completion settings are not available.');
     }
 
-    const presetName = binding.biasPresetName || '';
+    const presetName = normalizeChatCompletionBiasPresetName(binding.biasPresetName, { fallbackToDefault: true });
     const hasPreset = presetName && Object.hasOwn(modules.openai.oai_settings.bias_presets ?? {}, presetName);
 
     if (presetName && !hasPreset) {
@@ -274,7 +312,13 @@ async function applyChatCompletionBinding(binding) {
     }
 
     modules.openai.oai_settings.bias_preset_selected = presetName || null;
-    $('#openai_logit_bias_preset').val(presetName).trigger('change', { source: MODULE_NAME });
+
+    if (presetName) {
+        $('#openai_logit_bias_preset').val(presetName).trigger('change', { source: MODULE_NAME });
+    } else {
+        $('#openai_logit_bias_preset').trigger('change', { source: MODULE_NAME });
+    }
+
     getContext().saveSettingsDebounced();
 }
 
